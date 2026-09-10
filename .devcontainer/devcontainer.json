@@ -1,0 +1,25 @@
+{
+  "name": "HAEO",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    }
+  },
+  "postCreateCommand": "uv sync --locked --all-extras --dev",
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python", "charliermarsh.ruff", "ms-python.vscode-pylance"],
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/venv/bin/python",
+        "python.testing.pytestEnabled": true,
+        "python.testing.pytestArgs": ["-m", "not guide and not scenario and not benchmark"]
+      }
+    }
+  },
+  "remoteEnv": {
+    "UV_PROJECT_ENVIRONMENT": "/opt/venv"
+  }
+}

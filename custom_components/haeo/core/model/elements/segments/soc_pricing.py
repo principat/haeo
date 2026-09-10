@@ -93,6 +93,24 @@ class SocPricingSegment(Segment):
             out_array=True,
         )
 
+        # Outstanding toll owed for the current excursion: paid[0] is pinned to 0, and
+        # paid[t] is only ever bounded below by max(0, paid[t-1] + price * delta_slack(t)).
+        # The floor at 0 caps any rebate at what was actually paid in — without it, slack
+        # would be free to grow without bound to manufacture unlimited rebate (see
+        # soc_pricing_cost for why only the final value is priced).
+        self._discharge_energy_paid = solver.addVariables(
+            n_periods + 1,
+            lb=0,
+            name_prefix=f"{segment_id}_discharge_paid_",
+            out_array=True,
+        )
+        self._charge_capacity_paid = solver.addVariables(
+            n_periods + 1,
+            lb=0,
+            name_prefix=f"{segment_id}_charge_paid_",
+            out_array=True,
+        )
+
     def _get_battery(self) -> Any:
         """Find the battery element from the connection endpoints."""
         for element in (self.source_element, self.target_element):
@@ -142,23 +160,59 @@ class SocPricingSegment(Segment):
 
         return bounds or None
 
+    @constraint
+    def soc_paid_bounds(self) -> list[highs_linear_expression] | None:
+        """Bound the outstanding toll to a floored running total of priced slack changes.
+
+        ``paid[t] >= paid[t-1] + price(t) * (slack(t) - slack(t-1))`` together with
+        ``paid[t] >= 0`` implements ``paid[t] = max(0, ...)`` once ``soc_pricing_cost``
+        minimizes ``paid[-1]``: deepening the excursion raises the toll, recovering from
+        it lowers it, and the floor stops a recovery from ever earning more rebate than
+        was actually paid in. Index 0 is the base case of the same relation, treating the
+        implicit ``slack[-1]`` and ``paid[-1]`` before the horizon as zero — so it is not
+        pinned to zero itself: a real pre-existing excursion (``slack[0] > 0``) already
+        owes ``price(0) * slack[0]`` before the horizon even starts.
+
+        This also keeps every ``slack(t)`` pinned to its true minimal (data-driven) value:
+        minimizing ``paid[-1]`` transitively wants every earlier ``paid(t)`` — and hence
+        every ``slack(t)``, via its strictly positive price coefficient at each step —
+        as small as feasible. Without this, a slack could float to an arbitrary degenerate
+        value (many alternate paths net to the same final toll) which would make the
+        exposed per-period slack outputs meaningless, or worse: were ``paid[0]`` pinned to
+        exactly 0 instead of bounded by ``price(0) * slack[0]``, ``slack[0]`` would have no
+        upper bound and no cost, letting it be inflated to manufacture unlimited rebate on a
+        real violation later in the horizon.
+        """
+        bounds: list[highs_linear_expression] = []
+
+        if self.discharge_energy_price is not None and self.discharge_energy_threshold is not None:
+            slack, paid, price = self._discharge_energy_slack, self._discharge_energy_paid, self.discharge_energy_price
+            bounds.extend(list(paid[0:1] >= price[0:1] * slack[0:1]))
+            bounds.extend(list(paid[1:] >= paid[:-1] + (slack[1:] - slack[:-1]) * price))
+
+        if self.charge_capacity_price is not None and self.charge_capacity_threshold is not None:
+            slack, paid, price = self._charge_capacity_slack, self._charge_capacity_paid, self.charge_capacity_price
+            bounds.extend(list(paid[0:1] >= price[0:1] * slack[0:1]))
+            bounds.extend(list(paid[1:] >= paid[:-1] + (slack[1:] - slack[:-1]) * price))
+
+        return bounds or None
+
     @cost
     def soc_pricing_cost(self) -> highs_linear_expression | None:
         """Penalty cost for moving deeper outside SOC thresholds, rebated for moving back.
 
-        Priced on the change in slack between consecutive periods (at that period's own
-        price) rather than on the accumulated slack level, so a buffer excursion only costs
-        while it is being taken and while it is being given back — not for every period it
-        is held. This keeps the buffer usable as a short-term cushion for forecast
-        deviations instead of a one-way, time-accumulating penalty.
+        Only the final outstanding toll (see ``soc_paid_bounds``) is priced: minimizing it
+        drives the whole chain down to the tightest feasible value at each step, which is
+        exactly the floored running total of period-over-period slack changes at each
+        period's own price. A buffer excursion that fully recovers before the horizon ends
+        nets to zero cost regardless of how many periods it spanned — not summed per period
+        held — while an excursion still open at the end keeps its unrebated toll.
         """
         cost_terms = []
         if self.discharge_energy_price is not None and self.discharge_energy_threshold is not None:
-            delta = self._discharge_energy_slack[1:] - self._discharge_energy_slack[:-1]
-            cost_terms.append(Highs.qsum(delta * self.discharge_energy_price))
+            cost_terms.append(Highs.qsum(self._discharge_energy_paid[-1:]))
         if self.charge_capacity_price is not None and self.charge_capacity_threshold is not None:
-            delta = self._charge_capacity_slack[1:] - self._charge_capacity_slack[:-1]
-            cost_terms.append(Highs.qsum(delta * self.charge_capacity_price))
+            cost_terms.append(Highs.qsum(self._charge_capacity_paid[-1:]))
         if not cost_terms:
             return None
         if len(cost_terms) == 1:

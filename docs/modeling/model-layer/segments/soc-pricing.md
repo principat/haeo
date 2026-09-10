@@ -45,12 +45,15 @@ segment.
 
 Slack is tracked for $t = 0 \dots n$, where $t = 0$ is the depth already present at the start of the
 horizon (against the first period's threshold) and $t = 1 \dots n$ are the per-period values exposed
-as outputs.
+as outputs. An outstanding-toll variable $P(t)$ tracks the not-yet-rebated cost of the current
+excursion.
 
-| Variable            | Domain                | Description                            |
-| ------------------- | --------------------- | -------------------------------------- |
-| $S_{\text{dis}}(t)$ | $\mathbb{R}_{\geq 0}$ | Energy below discharge threshold       |
-| $S_{\text{chg}}(t)$ | $\mathbb{R}_{\geq 0}$ | Energy above charge capacity threshold |
+| Variable            | Domain                | Description                             |
+| ------------------- | --------------------- | ---------------------------------------- |
+| $S_{\text{dis}}(t)$ | $\mathbb{R}_{\geq 0}$ | Energy below discharge threshold        |
+| $S_{\text{chg}}(t)$ | $\mathbb{R}_{\geq 0}$ | Energy above charge capacity threshold  |
+| $P_{\text{dis}}(t)$ | $\mathbb{R}_{\geq 0}$ | Outstanding discharge toll, $t=0\dots n$ |
+| $P_{\text{chg}}(t)$ | $\mathbb{R}_{\geq 0}$ | Outstanding charge toll, $t=0\dots n$    |
 
 ### Constraints
 
@@ -66,25 +69,51 @@ $$
 S_{\text{chg}}(t) \geq E_{\text{stored}}(t) - E_{\text{chg}}(t)
 $$
 
+Outstanding toll, floored at zero so a recovery can never rebate more than was actually paid in.
+Index 0 is the base case of the same relation — treating the implicit $S(-1)$ and $P(-1)$ before the
+horizon as zero — so a real pre-existing excursion ($S(0) > 0$) already owes $c(0) \cdot S(0)$ before
+the horizon even starts, rather than being pinned to zero:
+
+$$
+P_{\text{dis}}(0) \geq c_{\text{dis}}(0) \cdot S_{\text{dis}}(0), \qquad P_{\text{dis}}(t) \geq P_{\text{dis}}(t-1) + c_{\text{dis}}(t) \cdot \left(S_{\text{dis}}(t) - S_{\text{dis}}(t-1)\right) \quad (t \geq 1)
+$$
+
+(and symmetrically for $P_{\text{chg}}$). Minimizing $P(n)$ forces this chain — together with
+$P(t) \geq 0$ — to its tightest feasible value at every step, which is exactly
+$P(t) = \max(0,\, P(t-1) + c(t) \cdot \Delta S(t))$: deepening the excursion raises the toll,
+recovering from it lowers it, and the floor stops it from going negative.
+
+This same chain also pins every $S(t)$ to its true minimal, data-driven value: minimizing $P(n)$
+transitively wants every earlier $P(t)$ — and hence every $S(t)$, via its strictly positive price
+coefficient at each step — as small as feasible. This matters because pinning $P(0)$ to exactly zero
+instead would leave $S(0)$ with no upper bound and no cost, letting it be inflated to manufacture
+unlimited rebate against a real violation later in the horizon.
+
 ### Cost contribution
 
-Priced on the period-over-period change in slack, not its level:
+Only the final outstanding toll is priced:
 
 $$
-\text{Cost} = \sum_{t=1}^{n} \left[ (S_{\text{dis}}(t) - S_{\text{dis}}(t-1)) \cdot c_{\text{dis}}(t) + (S_{\text{chg}}(t) - S_{\text{chg}}(t-1)) \cdot c_{\text{chg}}(t) \right]
+\text{Cost} = P_{\text{dis}}(n) + P_{\text{chg}}(n)
 $$
 
-Deepening the excursion ($S(t) > S(t-1)$) costs at that period's price; recovering from it
-($S(t) < S(t-1)$) rebates by the same amount at that period's price. A round trip into the buffer
-and back out nets to zero cost regardless of how many periods it spans — only the excursion's depth
-at entry and exit matters, not its duration. If the horizon ends mid-excursion, the entry cost is not
-yet rebated.
+A round trip into the buffer and back out nets to zero cost regardless of how many periods it
+spans or how deep it went — only the excursion's net recovery matters, not its duration. If the
+horizon ends mid-excursion, or a recovery only partially offsets an earlier excursion, the
+unrebated remainder stays in the cost. A pre-existing excursion that is already priced in at $t=0$
+(see above) is rebated the same way as one entered during the horizon.
+
+This pricing is exact when the price is constant across the horizon (the common case — this field is
+typically a fixed penalty rate rather than a real-time tariff). With a genuinely time-varying price, a
+small, bounded mispricing is possible: recovering during a period priced differently from when the
+excursion was entered rebates at the recovery period's price, not the original entry price.
 
 ## Physical interpretation
 
 SOC pricing models an economic toll for moving outside discharge and charge thresholds, refunded for
-moving back. These are soft constraints: the optimizer can violate thresholds when prices justify it,
-and a brief excursion used to absorb a forecast deviation is effectively free.
+moving back — capped so you can never be rebated more than you paid in. These are soft constraints:
+the optimizer can violate thresholds when prices justify it, and a brief excursion used to absorb a
+forecast deviation is effectively free.
 
 ## Pricing partitions with opposing thresholds
 
