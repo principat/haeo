@@ -71,7 +71,9 @@ SCENARIOS: list[SegmentScenario] = [
         "expected_outputs": {
             "discharge_energy_slack": (1.0, 0.0),
             "charge_capacity_slack": (0.0, 1.0),
-            "objective_value": 0.6,
+            # Delta-based pricing: discharge nets to 0 (entry 0.5 in period 0, exit -0.5 in
+            # period 1); charge only enters in period 1 (0.2), never exits within the horizon.
+            "objective_value": 0.2,
         },
         "endpoint_factory": _battery_endpoints_fixed,
     },
@@ -85,7 +87,9 @@ SCENARIOS: list[SegmentScenario] = [
         },
         "periods": np.array([1.0, 0.5]),
         "inputs": {"minimize_cost": True},
-        "expected_outputs": {"discharge_energy_slack": (1.0, 0.0), "objective_value": 0.5},
+        # Delta-based pricing: enters the buffer in period 0 (+0.5) and fully exits in
+        # period 1 (-0.5), netting to 0 since it never ends the horizon still in the buffer.
+        "expected_outputs": {"discharge_energy_slack": (1.0, 0.0), "objective_value": 0.0},
         "endpoint_factory": _battery_endpoints_fixed,
     },
     {
@@ -98,7 +102,9 @@ SCENARIOS: list[SegmentScenario] = [
         },
         "periods": np.array([1.0, 0.5]),
         "inputs": {"minimize_cost": True},
-        "expected_outputs": {"charge_capacity_slack": (0.0, 1.0), "objective_value": 0.1},
+        # Delta-based pricing: no charge-capacity slack until period 1, where it enters the
+        # buffer (+0.2) and the horizon ends there, so the cost is not yet rebated.
+        "expected_outputs": {"charge_capacity_slack": (0.0, 1.0), "objective_value": 0.2},
         "endpoint_factory": _battery_endpoints_fixed,
     },
     {

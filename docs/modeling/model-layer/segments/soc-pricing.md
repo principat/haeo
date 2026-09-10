@@ -2,8 +2,9 @@
 
 The `SocPricingSegment` adds cost terms when a connected battery's stored energy violates discharge
 energy thresholds or charge capacity thresholds.
-It uses slack variables to represent energy below or above thresholds and adds those slacks to the
-objective.
+It uses slack variables to represent energy below or above thresholds, but prices the *change* in
+those slacks rather than their level: entering the buffer costs, and leaving it rebates by the same
+amount, so a threshold excursion is not billed again for every period it is held.
 This is intended for soft, price-based incentives rather than hard operating limits.
 
 ## Model formulation
@@ -42,6 +43,10 @@ segment.
 
 ### Decision variables
 
+Slack is tracked for $t = 0 \dots n$, where $t = 0$ is the depth already present at the start of the
+horizon (against the first period's threshold) and $t = 1 \dots n$ are the per-period values exposed
+as outputs.
+
 | Variable            | Domain                | Description                            |
 | ------------------- | --------------------- | -------------------------------------- |
 | $S_{\text{dis}}(t)$ | $\mathbb{R}_{\geq 0}$ | Energy below discharge threshold       |
@@ -63,14 +68,23 @@ $$
 
 ### Cost contribution
 
+Priced on the period-over-period change in slack, not its level:
+
 $$
-\text{Cost} = \sum_{t} \left[ S_{\text{dis}}(t) \cdot c_{\text{dis}}(t) + S_{\text{chg}}(t) \cdot c_{\text{chg}}(t) \right]
+\text{Cost} = \sum_{t=1}^{n} \left[ (S_{\text{dis}}(t) - S_{\text{dis}}(t-1)) \cdot c_{\text{dis}}(t) + (S_{\text{chg}}(t) - S_{\text{chg}}(t-1)) \cdot c_{\text{chg}}(t) \right]
 $$
+
+Deepening the excursion ($S(t) > S(t-1)$) costs at that period's price; recovering from it
+($S(t) < S(t-1)$) rebates by the same amount at that period's price. A round trip into the buffer
+and back out nets to zero cost regardless of how many periods it spans — only the excursion's depth
+at entry and exit matters, not its duration. If the horizon ends mid-excursion, the entry cost is not
+yet rebated.
 
 ## Physical interpretation
 
-SOC pricing models economic penalties for operating outside discharge and charge thresholds.
-These are soft constraints: the optimizer can violate thresholds when prices justify it.
+SOC pricing models an economic toll for moving outside discharge and charge thresholds, refunded for
+moving back. These are soft constraints: the optimizer can violate thresholds when prices justify it,
+and a brief excursion used to absorb a forecast deviation is effectively free.
 
 ## Pricing partitions with opposing thresholds
 

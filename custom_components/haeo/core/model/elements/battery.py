@@ -188,6 +188,26 @@ class Battery(NetworkElement[BatteryOutputName]):
         """Cost: salvage value of stored energy at the end of the horizon."""
         return -self.salvage_value * self.stored_energy[-1]
 
+    def cost(self) -> tuple[highs_linear_expression | None, highs_linear_expression]:  # type: ignore[override]
+        """Return (primary_cost, secondary_cost) for this battery.
+
+        Primary: real economic costs (currently salvage value only), aggregated the
+        same way as any other element's ``@cost`` methods.
+        Secondary: time-preference objective rewarding higher stored energy earlier
+        in the horizon. When multiple schedules are equally optimal on primary cost,
+        this nudges the optimizer to charge sooner and discharge later, so weather or
+        price forecast changes have more slack to be absorbed before a planned charge
+        is due. Blended in via the network's calibrated secondary objective, so it
+        never overrides a genuine economic trade-off (see Network._calibrate_blend_weight).
+        """
+        primary = self.battery_salvage_value()
+
+        n_periods = self.n_periods
+        weights = np.arange(n_periods, 0, -1, dtype=np.float64)
+        secondary = -Highs.qsum(self.stored_energy[1:] * weights)
+
+        return (primary, secondary)
+
     # Output methods
 
     @output

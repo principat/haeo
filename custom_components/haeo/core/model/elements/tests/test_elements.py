@@ -59,8 +59,13 @@ def _solve_element_scenario(element: Any, inputs: ElementTestCaseInputs | None) 
         # Call constraints() to set up power balance with mocked connection_power
         element.constraints()
 
-        # Collect cost from element (aggregates all @cost methods)
+        # Collect cost from element (aggregates all @cost methods). Elements that also
+        # emit a secondary (tie-break) objective — like Battery — return a
+        # (primary, secondary) tuple; only the primary cost affects real optimality
+        # and shadow prices, so the secondary component is dropped here.
         element_cost = element.cost()
+        if isinstance(element_cost, tuple):
+            element_cost = element_cost[0]
 
         input_cost = broadcast_to_sequence(inputs.get("input_cost", 0.0), n_periods)
         output_cost = broadcast_to_sequence(inputs.get("output_cost", 0.0), n_periods)

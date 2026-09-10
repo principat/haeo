@@ -77,14 +77,17 @@ class SocPricingSegment(Segment):
             msg = "charge_capacity_threshold is required when charge_capacity_price is set"
             raise ValueError(msg)
 
+        # Slack arrays include one extra entry (index 0) for the depth already present at the
+        # start of the horizon, so the cost below can be computed as a delta between
+        # consecutive periods without a special case for the first period.
         self._discharge_energy_slack = solver.addVariables(
-            n_periods,
+            n_periods + 1,
             lb=0,
             name_prefix=f"{segment_id}_discharge_energy_",
             out_array=True,
         )
         self._charge_capacity_slack = solver.addVariables(
-            n_periods,
+            n_periods + 1,
             lb=0,
             name_prefix=f"{segment_id}_charge_capacity_",
             out_array=True,
@@ -100,44 +103,62 @@ class SocPricingSegment(Segment):
 
     @property
     def discharge_energy_slack(self) -> HighspyArray | None:
-        """Slack for energy below discharge threshold."""
+        """Slack for energy below discharge threshold (excludes the pre-horizon boundary)."""
         return _exposed_slack(
             self.discharge_energy_threshold,
             self.discharge_energy_price,
-            self._discharge_energy_slack,
+            self._discharge_energy_slack[1:],
         )
 
     @property
     def charge_capacity_slack(self) -> HighspyArray | None:
-        """Slack for energy above charge capacity threshold."""
+        """Slack for energy above charge capacity threshold (excludes the pre-horizon boundary)."""
         return _exposed_slack(
             self.charge_capacity_threshold,
             self.charge_capacity_price,
-            self._charge_capacity_slack,
+            self._charge_capacity_slack[1:],
         )
 
     @constraint
     def soc_slack_bounds(self) -> list[highs_linear_expression] | None:
-        """Bound slack variables to SOC threshold violations when penalties apply."""
+        """Bound slack variables to SOC threshold violations when penalties apply.
+
+        Index 0 tracks the depth already present at the start of the horizon (using the
+        first period's threshold as the reference), so ``soc_pricing_cost`` can price the
+        change in depth period over period without a special case for the first period.
+        """
         bounds: list[highs_linear_expression] = []
-        stored = np.asarray(self._battery.stored_energy, dtype=object)[1:]
+        stored = np.asarray(self._battery.stored_energy, dtype=object)
 
         if self.discharge_energy_threshold is not None and self.discharge_energy_price is not None:
-            bounds.extend(list(self._discharge_energy_slack >= self.discharge_energy_threshold - stored))
+            threshold = self.discharge_energy_threshold
+            bounds.extend(list(self._discharge_energy_slack[0:1] >= threshold[0] - stored[0:1]))
+            bounds.extend(list(self._discharge_energy_slack[1:] >= threshold - stored[1:]))
 
         if self.charge_capacity_threshold is not None and self.charge_capacity_price is not None:
-            bounds.extend(list(self._charge_capacity_slack >= stored - self.charge_capacity_threshold))
+            threshold = self.charge_capacity_threshold
+            bounds.extend(list(self._charge_capacity_slack[0:1] >= stored[0:1] - threshold[0]))
+            bounds.extend(list(self._charge_capacity_slack[1:] >= stored[1:] - threshold))
 
         return bounds or None
 
     @cost
     def soc_pricing_cost(self) -> highs_linear_expression | None:
-        """Penalty cost for operating outside SOC thresholds."""
+        """Penalty cost for moving deeper outside SOC thresholds, rebated for moving back.
+
+        Priced on the change in slack between consecutive periods (at that period's own
+        price) rather than on the accumulated slack level, so a buffer excursion only costs
+        while it is being taken and while it is being given back — not for every period it
+        is held. This keeps the buffer usable as a short-term cushion for forecast
+        deviations instead of a one-way, time-accumulating penalty.
+        """
         cost_terms = []
         if self.discharge_energy_price is not None and self.discharge_energy_threshold is not None:
-            cost_terms.append(Highs.qsum(self._discharge_energy_slack * self.discharge_energy_price * self.periods))
+            delta = self._discharge_energy_slack[1:] - self._discharge_energy_slack[:-1]
+            cost_terms.append(Highs.qsum(delta * self.discharge_energy_price))
         if self.charge_capacity_price is not None and self.charge_capacity_threshold is not None:
-            cost_terms.append(Highs.qsum(self._charge_capacity_slack * self.charge_capacity_price * self.periods))
+            delta = self._charge_capacity_slack[1:] - self._charge_capacity_slack[:-1]
+            cost_terms.append(Highs.qsum(delta * self.charge_capacity_price))
         if not cost_terms:
             return None
         if len(cost_terms) == 1:

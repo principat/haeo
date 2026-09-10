@@ -112,6 +112,21 @@ $$
 
 Other costs (efficiency losses, degradation penalties, SOC pricing) are applied through [Connection](../connections/index.md) elements in the device adapter layer.
 
+#### Secondary objective: charge-early / discharge-late preference
+
+Alongside the primary (real-money) cost above, the battery emits a secondary tie-break objective:
+
+$$
+-\sum_{t=1}^{T} (T - t + 1) \cdot \left(E_{\text{in}}(t) - E_{\text{out}}(t)\right)
+$$
+
+This rewards higher stored energy in earlier periods more than in later ones. It only ever
+influences which of several equally-optimal (on primary cost) schedules is chosen — the network's
+calibrated secondary objective (see [`Network`](https://github.com/hass-energy/haeo/blob/main/custom_components/haeo/core/model/network.py))
+guarantees it never degrades the primary cost. In practice this means: when the schedule is
+otherwise indifferent, charge sooner and discharge later, leaving more slack to absorb changes in
+solar or price forecasts before a planned charge is actually due.
+
 ## Physical Interpretation
 
 ### Cumulative Energy Tracking
