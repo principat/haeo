@@ -49,7 +49,7 @@ class _SolverBase:
 
     presolve: OnOffChoose = "choose"
     parallel: OnOffChoose = "choose"
-    time_limit: float = 30.0
+    time_limit: float = 10.0
 
     def _apply_common(self, h: Highs) -> None:
         h.setOptionValue("presolve", self.presolve)

@@ -514,7 +514,7 @@ def test_solve_options_defaults() -> None:
     opts = CalibratedOptions()
     assert opts.mode == "calibrated"
     assert opts.simplex_strategy == 4
-    assert opts.time_limit == 30.0
+    assert opts.time_limit == 10.0
     assert isinstance(opts, SimplexTuning)
 
 
