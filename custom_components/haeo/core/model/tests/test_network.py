@@ -514,6 +514,7 @@ def test_solve_options_defaults() -> None:
     opts = CalibratedOptions()
     assert opts.mode == "calibrated"
     assert opts.simplex_strategy == 4
+    assert opts.time_limit == 30.0
     assert isinstance(opts, SimplexTuning)
 
 
@@ -525,6 +526,15 @@ def test_solve_options_apply() -> None:
     opts.apply(h)
     assert h.getOptionValue("simplex_strategy")[1] == 4
     assert h.getOptionValue("presolve")[1] == "on"
+
+
+def test_solve_options_time_limit_applied() -> None:
+    """A custom time_limit reaches the solver, bounding every individual solve."""
+    opts = CalibratedOptions(time_limit=5.0)
+    h = Highs()
+    h.setOptionValue("output_flag", False)
+    opts.apply(h)
+    assert h.getOptionValue("time_limit")[1] == 5.0
 
 
 def test_solve_options_propagated_to_network() -> None:

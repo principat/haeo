@@ -37,14 +37,24 @@ _CAL_MARGIN: Final = 1.0  # step back from upper boundary (log10 decades)
 
 @dataclass(frozen=True, kw_only=True)
 class _SolverBase:
-    """Shared HiGHS options applicable to all solver algorithms."""
+    """Shared HiGHS options applicable to all solver algorithms.
+
+    time_limit bounds each individual HiGHS solve, in seconds. A single optimize()
+    call can run many solves internally (lexicographic phases, up to _CAL_MAX_STEPS
+    calibration bisection steps), so this bounds each one rather than the call as a
+    whole. It exists so a pathological or numerically degenerate model fails fast
+    with a caught, logged error (see Network._ensure_optimal) instead of tying up
+    an executor thread indefinitely.
+    """
 
     presolve: OnOffChoose = "choose"
     parallel: OnOffChoose = "choose"
+    time_limit: float = 30.0
 
     def _apply_common(self, h: Highs) -> None:
         h.setOptionValue("presolve", self.presolve)
         h.setOptionValue("parallel", self.parallel)
+        h.setOptionValue("time_limit", self.time_limit)
 
 
 @dataclass(frozen=True, kw_only=True)
